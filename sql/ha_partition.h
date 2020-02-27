@@ -1050,8 +1050,10 @@ public:
     For the given range how many records are estimated to be in this range.
     Used by optimiser to calculate cost of using a particular index.
   */
-  virtual ha_rows records_in_range(uint inx, key_range * min_key,
-				   key_range * max_key);
+  virtual ha_rows records_in_range(uint inx,
+                                   const key_range * min_key,
+                                   const key_range * max_key,
+                                   page_range *pages);
 
   /*
     Upper bound of number records returned in scan is sum of all

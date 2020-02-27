@@ -104,7 +104,7 @@ handler::multi_range_read_info_const(uint keyno, RANGE_SEQ_IF *seq,
   ha_rows max_rows= stats.records;
   THD *thd= table->in_use;
   StringBuffer<64> key_value;
-  
+
   uint limit= thd->variables.eq_range_index_dive_limit;
 
   bool use_statistics_for_eq_range= eq_ranges_exceeds_limit(seq,
@@ -155,10 +155,11 @@ handler::multi_range_read_info_const(uint keyno, RANGE_SEQ_IF *seq,
     {
       ulonglong min_block_no;
       ulonglong max_block_no;
+      page_range pages;
       if ((range.range_flag & UNIQUE_RANGE) && !(range.range_flag & NULL_RANGE))
         rows= 1; /* there can be at most one row */
       else if (HA_POS_ERROR == (rows= this->records_in_range(keyno, min_endp,
-                                                        max_endp)))
+                                                             max_endp, &pages)))
       {
         /* Can't scan one range => can't do MRR scan at all */
         total_rows= HA_POS_ERROR;
@@ -175,7 +176,7 @@ handler::multi_range_read_info_const(uint keyno, RANGE_SEQ_IF *seq,
            Get the estimate of rows in the previous gap
            and two ranges surrounding this gap
         */
-        ha_rows r= this->records_in_range(keyno,start_endp,max_endp);
+        ha_rows r= this->records_in_range(keyno,start_endp,max_endp, &pages);
         if (r == HA_POS_ERROR)
 	{
           /* Some engine cannot estimate such ranges */
