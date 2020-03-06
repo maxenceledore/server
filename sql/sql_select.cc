@@ -7424,7 +7424,7 @@ best_access_path(JOIN      *join,
         records= 1.0;
         type= JT_FT;
         trace_access_idx.add("access_type", join_type_str[type])
-                        .add("full-text index", keyinfo->name);
+                        .add("fulltext_index", keyinfo->name);
       }
       else
       {
@@ -7449,7 +7449,6 @@ best_access_path(JOIN      *join,
             type= JT_EQ_REF;
             trace_access_idx.add("access_type", join_type_str[type])
                             .add("index", keyinfo->name);
-            tmp = prev_record_reads(join_positions, idx, found_ref);
             records=1.0;
           }
           else
@@ -7537,16 +7536,24 @@ best_access_path(JOIN      *join,
                 }
               }
             }
-            /* Limit the number of matched rows */
-            tmp= records;
-            set_if_smaller(tmp, (double) thd->variables.max_seeks_for_key);
-            if (table->covering_keys.is_set(key))
-              tmp= table->file->keyread_time(key, 1, (ha_rows) tmp);
-            else
-              tmp= table->file->read_time(key, 1,
-                                          (ha_rows) MY_MIN(tmp,s->worst_seeks));
-            tmp= COST_MULT(tmp, record_count);
           }
+          /* Limit the number of matched rows */
+          tmp= records;
+          set_if_smaller(tmp, (double) thd->variables.max_seeks_for_key);
+          if (table->covering_keys.is_set(key))
+            tmp= table->file->keyread_time(key, 1, (ha_rows) tmp);
+          else
+            tmp= table->file->read_time(key, 1,
+                                        (ha_rows) MY_MIN(tmp,s->worst_seeks));
+          double adjusted_record_count= prev_record_reads(join_positions, idx,
+                                                          found_ref);
+          /*
+            For JT_REF there is on extra index value compare. We add this to
+            favour JT_EQ_REF slightly
+          */
+          if (type != JT_EQ_REF)
+            tmp+= 1.0/TIME_FOR_COMPARE_IDX;
+          tmp= COST_MULT(tmp, adjusted_record_count);
         }
         else
         {
