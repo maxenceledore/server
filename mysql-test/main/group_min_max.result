@@ -2363,7 +2363,7 @@ test.t1	analyze	status	Engine-independent statistics collected
 test.t1	analyze	status	OK
 explain SELECT MAX(b), a FROM t1 WHERE b < 2 AND a = 1 GROUP BY a;
 id	select_type	table	type	possible_keys	key	key_len	ref	rows	Extra
-1	SIMPLE	t1	range	a,b	a	10	NULL	6	Using where; Using index
+1	SIMPLE	t1	range	a,b	a	10	NULL	2	Using where; Using index for group-by
 SELECT MAX(b), a FROM t1 WHERE b < 2 AND a = 1 GROUP BY a;
 MAX(b)	a
 1	1
@@ -2388,7 +2388,7 @@ test.t1	analyze	status	Engine-independent statistics collected
 test.t1	analyze	status	OK
 EXPLAIN SELECT max(b), a FROM t1 GROUP BY a;
 id	select_type	table	type	possible_keys	key	key_len	ref	rows	Extra
-1	SIMPLE	t1	index	NULL	a	10	NULL	15	Using index
+1	SIMPLE	t1	range	NULL	a	5	NULL	6	Using index for group-by
 FLUSH STATUS;
 SELECT max(b), a FROM t1 GROUP BY a;
 max(b)	a
@@ -2398,18 +2398,18 @@ max(b)	a
 6	4
 SHOW STATUS LIKE 'handler_read__e%';
 Variable_name	Value
-Handler_read_key	0
-Handler_read_next	15
+Handler_read_key	8
+Handler_read_next	0
 Handler_read_retry	0
 EXPLAIN SELECT max(b), a FROM t1 GROUP BY a;
 id	select_type	table	type	possible_keys	key	key_len	ref	rows	Extra
-1	SIMPLE	t1	index	NULL	a	10	NULL	15	Using index
+1	SIMPLE	t1	range	NULL	a	5	NULL	6	Using index for group-by
 FLUSH STATUS;
 CREATE TABLE t2 SELECT max(b), a FROM t1 GROUP BY a;
 SHOW STATUS LIKE 'handler_read__e%';
 Variable_name	Value
-Handler_read_key	0
-Handler_read_next	15
+Handler_read_key	8
+Handler_read_next	0
 Handler_read_retry	0
 FLUSH STATUS;
 SELECT * FROM (SELECT max(b), a FROM t1 GROUP BY a) b;
@@ -2420,8 +2420,8 @@ max(b)	a
 6	4
 SHOW STATUS LIKE 'handler_read__e%';
 Variable_name	Value
-Handler_read_key	0
-Handler_read_next	15
+Handler_read_key	8
+Handler_read_next	0
 Handler_read_retry	0
 FLUSH STATUS;
 (SELECT max(b), a FROM t1 GROUP BY a) UNION 
@@ -2433,14 +2433,14 @@ max(b)	a
 6	4
 SHOW STATUS LIKE 'handler_read__e%';
 Variable_name	Value
-Handler_read_key	0
-Handler_read_next	30
+Handler_read_key	16
+Handler_read_next	0
 Handler_read_retry	0
 EXPLAIN (SELECT max(b), a FROM t1 GROUP BY a) UNION 
 (SELECT max(b), a FROM t1 GROUP BY a);
 id	select_type	table	type	possible_keys	key	key_len	ref	rows	Extra
-1	PRIMARY	t1	index	NULL	a	10	NULL	15	Using index
-2	UNION	t1	index	NULL	a	10	NULL	15	Using index
+1	PRIMARY	t1	range	NULL	a	5	NULL	6	Using index for group-by
+2	UNION	t1	range	NULL	a	5	NULL	6	Using index for group-by
 NULL	UNION RESULT	<union1,2>	ALL	NULL	NULL	NULL	NULL	NULL	
 EXPLAIN SELECT (SELECT max(b) FROM t1 GROUP BY a HAVING a < 2) x
 FROM t1 AS t1_outer;
@@ -2466,7 +2466,7 @@ id	select_type	table	type	possible_keys	key	key_len	ref	rows	Extra
 EXPLAIN SELECT 1 FROM t1 AS t1_outer GROUP BY a HAVING 
 a > (SELECT max(b) FROM t1 GROUP BY a HAVING a < 2);
 id	select_type	table	type	possible_keys	key	key_len	ref	rows	Extra
-1	PRIMARY	t1_outer	index	NULL	a	10	NULL	15	Using index
+1	PRIMARY	t1_outer	range	NULL	a	5	NULL	6	Using index for group-by
 2	SUBQUERY	t1	range	a	a	5	NULL	5	Using where; Using index
 EXPLAIN SELECT 1 FROM t1 AS t1_outer1 JOIN t1 AS t1_outer2 
 ON t1_outer1.a = (SELECT max(b) FROM t1 GROUP BY a HAVING a < 2) 
@@ -2486,8 +2486,8 @@ FLUSH STATUS;
 INSERT INTO t3 SELECT a,MAX(b) FROM t1 GROUP BY a;
 SHOW STATUS LIKE 'handler_read__e%';
 Variable_name	Value
-Handler_read_key	5
-Handler_read_next	15
+Handler_read_key	13
+Handler_read_next	0
 Handler_read_retry	0
 DELETE FROM t3;
 FLUSH STATUS;
@@ -2495,15 +2495,15 @@ INSERT INTO t3 SELECT 1, (SELECT MAX(b) FROM t1 GROUP BY a HAVING a < 2)
 FROM t1 LIMIT 1;
 SHOW STATUS LIKE 'handler_read__e%';
 Variable_name	Value
-Handler_read_key	0
-Handler_read_next	15
+Handler_read_key	8
+Handler_read_next	0
 Handler_read_retry	0
 FLUSH STATUS;
 DELETE FROM t3 WHERE (SELECT MAX(b) FROM t1 GROUP BY a HAVING a < 2) > 10000;
 SHOW STATUS LIKE 'handler_read__e%';
 Variable_name	Value
-Handler_read_key	0
-Handler_read_next	15
+Handler_read_key	8
+Handler_read_next	0
 Handler_read_retry	0
 FLUSH STATUS;
 DELETE FROM t3 WHERE (SELECT (SELECT MAX(b) FROM t1 GROUP BY a HAVING a < 2) x 
@@ -2511,8 +2511,8 @@ FROM t1) > 10000;
 ERROR 21000: Subquery returns more than 1 row
 SHOW STATUS LIKE 'handler_read__e%';
 Variable_name	Value
-Handler_read_key	0
-Handler_read_next	16
+Handler_read_key	8
+Handler_read_next	1
 Handler_read_retry	0
 DROP TABLE t1,t2,t3;
 CREATE TABLE t1 (a int, INDEX idx(a));
@@ -2664,7 +2664,7 @@ a	b
 3	13
 explain extended select sql_buffer_result a, max(b)+1 from t1 where a = 0 group by a;
 id	select_type	table	type	possible_keys	key	key_len	ref	rows	filtered	Extra
-1	SIMPLE	t1	ref	a,index	a	5	const	15	100.00	Using index; Using temporary
+1	SIMPLE	t1	ref	a,index	a	5	const	15	20.00	Using index; Using temporary
 Warnings:
 Note	1003	select sql_buffer_result `test`.`t1`.`a` AS `a`,max(`test`.`t1`.`b`) + 1 AS `max(b)+1` from `test`.`t1` where `test`.`t1`.`a` = 0 group by `test`.`t1`.`a`
 drop table t1;
@@ -3664,7 +3664,7 @@ f1	COUNT(DISTINCT f2)
 3	4
 explain SELECT f1, COUNT(DISTINCT f2) FROM t1 GROUP BY f1;
 id	select_type	table	type	possible_keys	key	key_len	ref	rows	Extra
-1	SIMPLE	t1	range	NULL	f1	5	NULL	9	Using index for group-by (scanning)
+1	SIMPLE	t1	range	NULL	f1	5	NULL	9	Using index for group-by
 drop table t1;
 # End of test#50539.
 #
@@ -3760,7 +3760,7 @@ CREATE INDEX break_it ON t1 (a, b);
 EXPLAIN
 SELECT distinct a, b FROM t1 where a = '3' ORDER BY b;
 id	select_type	table	type	possible_keys	key	key_len	ref	rows	Extra
-1	SIMPLE	t1	ref	break_it	break_it	5	const	6	Using where; Using index; Using filesort
+1	SIMPLE	t1	range	break_it	break_it	10	NULL	2	Using where; Using index for group-by; Using filesort
 SELECT distinct a, b FROM t1 where a = '3' ORDER BY b;
 a	b
 3	1

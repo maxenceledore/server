@@ -84,9 +84,10 @@ handler::multi_range_read_info_const(uint keyno, RANGE_SEQ_IF *seq,
   range_seq_t seq_it;
   ha_rows total_rows= 0;
   uint n_ranges=0;
-  uint n_eq_ranges= 0;
   ha_rows max_rows= stats.records;
   THD *thd= table->in_use;
+  ulonglong io_blocks;
+
   /*
      Counter of blocks that contain range edges for those ranges
      for which records_in_range() is called
@@ -110,10 +111,21 @@ handler::multi_range_read_info_const(uint keyno, RANGE_SEQ_IF *seq,
   */
   ulonglong single_point_ranges= 0;
   /*
-    The counter of single point ranges that we have already assigned to
-    some block
+    The counter of of single point ranges that we succeded to assign
+    to some blocks
   */
   ulonglong assigned_single_point_ranges= 0;
+  /*
+    Counter of single point ranges for which records_in_range in not
+    called and that are encountered between two ranges without such property
+    For example, let's have a subsequence of ranges
+    R1,r1,....rk,R2
+    where r1,...,rk are single point ranges for which records_in_range is
+    called while R1 and R2 are not such ranges.
+    Then single_point_ranges_delta will count ranges r1,...,rk.
+  */
+  ulonglong unassigned_single_point_ranges= 0;
+
   uint len= table->key_info[keyno].key_length + table->file->ref_length;
   if (keyno == table->s->primary_key && table->file->primary_key_is_clustered())
     len= table->s->stored_rec_length;
@@ -137,8 +149,6 @@ handler::multi_range_read_info_const(uint keyno, RANGE_SEQ_IF *seq,
       DBUG_RETURN(HA_POS_ERROR);
 
     n_ranges++;
-    if (range.range_flag & EQ_RANGE)
-      n_eq_ranges++;
     key_range *min_endp, *max_endp;
     if (range.range_flag & GEOM_FLAG)
     {
@@ -273,9 +283,9 @@ handler::multi_range_read_info_const(uint keyno, RANGE_SEQ_IF *seq,
           ulonglong additional_blocks= ((MY_MAX(rows, 1) - 1) /
                                         avg_block_records + 1);
           edge_blocks_cnt+= additional_blocks == 1 ? 1 : 2;
-          range_blocks_cnt+= (additional_blocks +
-                              (single_point_ranges -
-                               assigned_single_point_ranges));
+          range_blocks_cnt+= additional_blocks;
+          unassigned_single_point_ranges+= (single_point_ranges -
+                                            assigned_single_point_ranges);
           assigned_single_point_ranges= single_point_ranges;
           prev_range_last_block= pages.last_page;
           /* There is at least one row on last page */
@@ -285,8 +295,22 @@ handler::multi_range_read_info_const(uint keyno, RANGE_SEQ_IF *seq,
     }
     total_rows+= rows;
   }
-  ulonglong io_blocks= (range_blocks_cnt - edge_blocks_cnt +
-                        (single_point_ranges - assigned_single_point_ranges));
+  /*
+    Count the number of io_blocks that where not yet read and thus not cached.
+    The number of equal read blocks that where not read are:
+
+    (single_point_ranges - assigned_single_point_ranges).
+
+    We don't add these to io_blocks as we don't want to penalize equal
+    readss (if we did, a range that would read 5 rows would be
+    regarded as better than one equal read).
+
+    Better to assume we have done a records_in_range() for the equal
+    range and it's also cached.
+  */
+  io_blocks= (range_blocks_cnt - edge_blocks_cnt);
+  unassigned_single_point_ranges+= (single_point_ranges -
+                                    assigned_single_point_ranges);
 
   if (total_rows != HA_POS_ERROR)
   {
@@ -295,32 +319,35 @@ handler::multi_range_read_info_const(uint keyno, RANGE_SEQ_IF *seq,
     /* The following calculation is the same as in multi_range_read_info(): */
     *flags |= HA_MRR_USE_DEFAULT_IMPL;
     cost->reset();
-    cost->avg_io_cost= 1;        /* Assume random seeks */
-    cost->idx_avg_io_cost= 1;
+    cost->avg_io_cost= cost->idx_avg_io_cost= table->file->avg_io_cost();
+
     if (!((keyno == table->s->primary_key && primary_key_is_clustered()) ||
 	   is_clustering_key(keyno)))
     {
-      cost->idx_io_count= keyread_time(keyno, 0, total_rows);
-      cost->cpu_cost= (cost->idx_cpu_cost=
-                       (double) total_rows / TIME_FOR_COMPARE_IDX +
-                       (2 * n_ranges - n_eq_ranges) * IDX_LOOKUP_COST);
+      cost->idx_io_count= io_blocks;
+      cost->idx_cpu_cost= (keyread_time(keyno, 0, total_rows) +
+                           n_ranges * IDX_LOOKUP_COST);
       if (!(*flags & HA_MRR_INDEX_ONLY))
-      {
-        cost->io_count= read_time(keyno, 0, total_rows);
-        cost->cpu_cost+= (double) total_rows / TIME_FOR_COMPARE;
-      }
+        cost->cpu_cost= read_time(keyno, 0, total_rows);
     }
     else
     {
-      cost->io_count= read_time(keyno,
-                                (uint) io_blocks,
-                                (uint) total_rows);
-      cost->cpu_cost= (double) total_rows / TIME_FOR_COMPARE + 0.01;
+      /*
+        Clustered index
+        If all index dives are to a few blocks, then limit the
+        ranges used by read_time to the number of dives.
+      */
+      io_blocks+= unassigned_single_point_ranges;
+      cost->idx_cpu_cost= n_ranges * IDX_LOOKUP_COST;
+      uint limited_ranges= MY_MIN(n_ranges, io_blocks);
+      cost->cpu_cost= read_time(keyno, limited_ranges, total_rows);
     }
+    cost->cpu_cost+= (double) total_rows / TIME_FOR_COMPARE;
   }
   DBUG_PRINT("statistics",
-             ("rows: %llu  total_cost: %.3f  io_blocks: %llu  "
+             ("key: %s  rows: %llu  total_cost: %.3f  io_blocks: %llu  "
               "idx_io_count: %.3f  cpu_cost: %.3f  io_count: %.3f",
+              table->s->keynames.type_names[keyno],
               (ulonglong) total_rows, cost->total_cost(), (ulonglong) io_blocks,
               cost->idx_io_count, cost->cpu_cost, cost->io_count));
   DBUG_RETURN(total_rows);
@@ -375,25 +402,27 @@ ha_rows handler::multi_range_read_info(uint keyno, uint n_ranges, uint n_rows,
   *flags |= HA_MRR_USE_DEFAULT_IMPL;
 
   cost->reset();
-  cost->avg_io_cost= 1; /* assume random seeks */
 
   /* Produce the same cost as non-MRR code does */
   if (!(keyno == table->s->primary_key && primary_key_is_clustered()))
   {
-    cost->idx_io_count=  n_ranges + keyread_time(keyno, 0, n_rows);
-    cost->cpu_cost= cost->idx_cpu_cost=
-      (double) n_rows / TIME_FOR_COMPARE_IDX + n_ranges * IDX_LOOKUP_COST;
+    /*
+      idx_io_count could potentially be increased with the number of
+      index leaf blocks we have to read for finding n_rows.
+    */
+    cost->idx_io_count=  n_ranges;
+    cost->idx_cpu_cost= (keyread_time(keyno, 0, n_rows) +
+                         n_ranges * IDX_LOOKUP_COST);
     if (!(*flags & HA_MRR_INDEX_ONLY))
     {
-      cost->io_count= read_time(keyno, 0, n_rows);
-      cost->cpu_cost+= (double) n_rows / TIME_FOR_COMPARE;
+      cost->cpu_cost= read_time(keyno, 0, n_rows);
     }
   }
   else
   {
-    cost->io_count= read_time(keyno, n_ranges, (uint)n_rows);
-    cost->cpu_cost= (double) n_rows / TIME_FOR_COMPARE + 0.01;
+    cost->cpu_cost= read_time(keyno, n_ranges, (uint)n_rows);
   }
+  cost->cpu_cost+= (double) n_rows / TIME_FOR_COMPARE;
   return 0;
 }
 
@@ -2068,6 +2097,9 @@ void get_sort_and_sweep_cost(TABLE *table, ha_rows nrows, Cost_estimate *cost)
 
   We define half_rotation_cost as DISK_SEEK_BASE_COST=0.9.
 
+  If handler::avg_io_cost() < 1.0, then we will trust the handler
+  when it comes to the average cost (this is for example true for HEAP).
+
   @param table             Table to be accessed
   @param nrows             Number of rows to retrieve
   @param interrupted       TRUE <=> Assume that the disk sweep will be
@@ -2083,10 +2115,10 @@ void get_sweep_read_cost(TABLE *table, ha_rows nrows, bool interrupted,
   cost->reset();
   if (table->file->primary_key_is_clustered())
   {
-    cost->io_count= table->file->read_time(table->s->primary_key,
+    cost->cpu_cost= table->file->read_time(table->s->primary_key,
                                            (uint) nrows, nrows);
   }
-  else
+  else if ((cost->avg_io_cost= table->file->avg_io_cost()) >= 0.999)
   {
     double n_blocks=
       ceil(ulonglong2double(table->file->stats.data_file_length) / IO_SIZE);
@@ -2114,5 +2146,3 @@ void get_sweep_read_cost(TABLE *table, ha_rows nrows, bool interrupted,
 /* **************************************************************************
  * DS-MRR implementation ends
  ***************************************************************************/
-
-

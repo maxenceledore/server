@@ -2675,7 +2675,7 @@ public:
   {
     return IO_COEFF*io_count*avg_io_cost +
            IO_COEFF*idx_io_count*idx_avg_io_cost +
-           CPU_COEFF*cpu_cost + 
+           CPU_COEFF*(cpu_cost + idx_cpu_cost) +
            MEM_COEFF*mem_cost + IMPORT_COEFF*import_cost;
   }
 
@@ -2905,7 +2905,7 @@ public:
     data_file_length(0), max_data_file_length(0),
     index_file_length(0), max_index_file_length(0), delete_length(0),
     auto_increment_value(0), records(0), deleted(0), mean_rec_length(0),
-    create_time(0), check_time(0), update_time(0), block_size(0),
+    create_time(0), check_time(0), update_time(0), block_size(8192),
     checksum(0), checksum_null(FALSE), mrr_length_per_rec(0)
   {}
 };
@@ -3388,12 +3388,18 @@ public:
     return keyread_time(index, 1, records());
   }
 
+  virtual double avg_io_cost()
+  {
+    return 1.0;
+  }
+
   /**
      The cost of reading a set of ranges from the table using an index
      to access it.
      
      @param index  The index number.
-     @param ranges The number of ranges to be read.
+     @param ranges The number of ranges to be read. If 0, it means that
+                   we calculate separately the cost of reading the key.
      @param rows   Total number of rows to be read.
      
      This method can be used to calculate the total cost of scanning a table
