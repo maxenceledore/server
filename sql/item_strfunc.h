@@ -663,17 +663,17 @@ public:
 };
 
 /*
-  Item_func_password -- new (4.1.1) PASSWORD() function implementation.
-  Returns strcat('*', octet2hex(sha1(sha1(password)))). '*' stands for new
-  password format, sha1(sha1(password) is so-called hash_stage2 value.
-  Length of returned string is always 41 byte. To find out how entire
+  Item_func_password -- new (10.5) PASSWORD() function implementation.
+  Returns strcat('+', octet2hex(sha512(sha512(password)))). '+' stands for new
+  password format, sha512(sha512(password) is so-called hash_stage2 value.
+  Length of returned string is always 129 byte. To find out how entire
   authentication procedure works, see comments in password.c.
 */
 
 class Item_func_password :public Item_str_ascii_checksum_func
 {
 public:
-  enum PW_Alg {OLD, NEW};
+  enum PW_Alg {OLD, NEW, NEW_2020};
 private:
   char tmp_value[SCRAMBLED_PASSWORD_CHAR_LENGTH+1]; 
   enum PW_Alg alg;

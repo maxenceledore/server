@@ -153,9 +153,11 @@ enum enum_indicator_type
   Length of random string sent by server on handshake; this is also length of
   obfuscated password, received from client
 */
+#define SHA512_SCRAMBLE_LENGTH 64
 #define SCRAMBLE_LENGTH 20
 #define SCRAMBLE_LENGTH_323 8
-/* length of password stored in the db: new passwords are preceded with '*' */
+/* length of password stored in the db: 4.1.1 passwords are preceded with '*' */
+/* length of password stored in the db: new passwords are preceded with '+'   */
 #define SCRAMBLED_PASSWORD_CHAR_LENGTH (SCRAMBLE_LENGTH*2+1)
 #define SCRAMBLED_PASSWORD_CHAR_LENGTH_323 (SCRAMBLE_LENGTH_323*2)
 

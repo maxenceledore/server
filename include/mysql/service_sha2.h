@@ -29,6 +29,8 @@ extern "C" {
 #include <stdlib.h>
 #endif
 
+#define MY_SHA512_HASH_SIZE 64 /* Hash size in bytes */
+
 extern struct my_sha2_service_st {
   void (*my_sha224_type)(unsigned char*, const char*, size_t);
   void (*my_sha224_multi_type)(unsigned char*, ...);

@@ -270,19 +270,22 @@ void get_salt_from_password_323(ulong *res, const char *password)
 
 void make_password_from_salt_323(char *to, const ulong *salt)
 {
-  sprintf(to,"%08lx%08lx", salt[0], salt[1]);
+  sprintf(to,"%08lx%08lx", salt[0], salt[1]); /* XXX */
 }
 
 
 /*
-     **************** MySQL 4.1.1 authentication routines *************
+     **************** MariaDB 10.5 authentication routines *************
 */
 
 
-/* Character to use as version identifier for version 4.1 */
+/* Character to use as version identifier for version 4.1 (SHA1) */
 
 #define PVERSION41_CHAR '*'
 
+/* Character to use as version identifier for version 10.5 (SHA512) */
+
+#define PVERSION105_CHAR '|'
 
 /*
     Convert given octet sequence to asciiz string of hex characters;
@@ -376,6 +379,30 @@ void compute_two_stage_sha1_hash(const char *password, size_t pass_len,
 }
 
 
+/**
+  Compute two stage SHA512 hash of the password :
+
+    hash_stage1=sha512("password")
+    hash_stage2=sha512(hash_stage1)
+
+  @param password    [IN]   Password string.
+  @param pass_len    [IN]   Length of the password.
+  @param hash_stage1 [OUT]  sha1(password)
+  @param hash_stage2 [OUT]  sha1(hash_stage1)
+*/
+
+inline static
+void compute_two_stage_sha512_hash(const char *password, size_t pass_len,
+                                 uint8 *hash_stage1, uint8 *hash_stage2)
+{
+  /* Stage 1: hash password */
+  my_sha512(hash_stage1, password, pass_len);
+
+  /* Stage 2 : hash first stage's output. */
+  my_sha512(hash_stage2, (const char *) hash_stage1, MY_SHA512_HASH_SIZE);
+}
+
+
 /*
     MySQL 4.1.1 password hashing: SHA conversion (see RFC 2289, 3174) twice
     applied to the password string, and then produced octet sequence is
@@ -384,7 +411,7 @@ void compute_two_stage_sha1_hash(const char *password, size_t pass_len,
     is stored in the database.
   SYNOPSIS
     my_make_scrambled_password()
-    buf       OUT buffer of size 2*MY_SHA1_HASH_SIZE + 2 to store hex string
+    buf       OUT buffer of size 2*MY_SHA512_HASH_SIZE + 2 to store hex string
     password  IN  password string
     pass_len  IN  length of password string
 */
@@ -398,7 +425,7 @@ void my_make_scrambled_password(char *to, const char *password,
   compute_two_stage_sha1_hash(password, pass_len, (uint8 *) to, hash_stage2);
 
   /* convert hash_stage2 to hex string */
-  *to++= PVERSION41_CHAR;
+  *to++= PVERSION105_CHAR;
   octet2hex(to, (const char*) hash_stage2, MY_SHA1_HASH_SIZE);
 }
   
@@ -500,25 +527,33 @@ check_scramble(const uchar *scramble_arg, const char *message,
     get_salt_from_password()
     res       OUT buf to hold password. Must be at least MY_SHA1_HASH_SIZE
                   bytes long.
-    password  IN  4.1.1 version value of user.password
+    password  IN  value of user.password
+    hash_size IN  hash_size
 */
     
-void get_salt_from_password(uint8 *hash_stage2, const char *password)
+void get_salt_from_password(uint8 *hash_stage2, const char *password, uint hash_size)
 {
-  hex2octet(hash_stage2, password+1 /* skip '*' */, MY_SHA1_HASH_SIZE * 2);
+  if (hash_size == MY_SHA1_HASH_SIZE)
+    hex2octet(hash_stage2, password+1 /* skip '*' (SHA1) or '+' (SHA2) */, MY_SHA1_HASH_SIZE * 2);
+  else if (hash_size == MY_SHA512_HASH_SIZE)
+    hex2octet(hash_stage2, password+1 /* skip '*' (SHA1) or '+' (SHA2) */, MY_SHA512_HASH_SIZE * 2);
 }
 
 /*
     Convert scrambled password from binary form to asciiz hex string.
   SYNOPSIS
     make_password_from_salt()
-    to    OUT store resulting string here, 2*MY_SHA1_HASH_SIZE+2 bytes 
-    salt  IN  password in salt format
+    to         OUT store resulting string here, 2*MY_SHA1_HASH_SIZE+2 bytes 
+    salt       IN  password in salt format
+    hash_size  IN  hash_size
 */
 
-void make_password_from_salt(char *to, const uint8 *hash_stage2)
+void make_password_from_salt(char *to, const uint8 *hash_stage2, uint hash_size)
 {
-  *to++= PVERSION41_CHAR;
-  octet2hex(to, (const char*) hash_stage2, MY_SHA1_HASH_SIZE);
+    if (hash_size == MY_SHA1_HASH_SIZE)
+        *to++= PVERSION41_CHAR;
+    else if (hash_size == MY_SHA512_HASH_SIZE)
+        *to++= PVERSION105_CHAR;
+  octet2hex(to, (const char*) hash_stage2, hash_size);
 }
 

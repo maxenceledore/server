@@ -2226,13 +2226,15 @@ String *Item_func_password::val_str_ascii(String *str)
 char *Item_func_password::alloc(THD *thd, const char *password,
                                 size_t pass_len, enum PW_Alg al)
 {
-  char *buff= (char *) thd->alloc((al==NEW)?
+  char *buff= (char *) thd->alloc((al==NEW)? /* XXX */
                                   SCRAMBLED_PASSWORD_CHAR_LENGTH + 1:
                                   SCRAMBLED_PASSWORD_CHAR_LENGTH_323 + 1);
   if (!buff)
     return NULL;
 
   switch (al) {
+  case NEW2020:
+    my_make_scrambled_password_sha512(buff, password, pass_len);
   case NEW:
     my_make_scrambled_password(buff, password, pass_len);
     break;
